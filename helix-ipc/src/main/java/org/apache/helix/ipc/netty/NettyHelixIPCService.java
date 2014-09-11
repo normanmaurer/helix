@@ -24,6 +24,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
@@ -270,7 +271,15 @@ public class NettyHelixIPCService implements HelixIPCService {
       // Send
       statTxMsg.mark();
       statTxBytes.mark(fullByteBuf.readableBytes());
-      channel.writeAndFlush(fullByteBuf);
+      ChannelFuture future = channel.writeAndFlush(fullByteBuf);
+      if (!channel.isWritable()) {
+          // The channel is not writable anymore because the not written data exceed the
+          // Channel.config().getWriteHighWaterMark(). We will block until this buffer was written out to
+          // make sure we not write to fast. This is a pretty naive back-pressure implementation and
+          // something more smart could be implemented which will only block until the Channel.isWritable() returns
+          // true again (which may be the cause if the queued writes were written partial).
+          future.awaitUninterruptibly();
+      }
     } catch (Exception e) {
       statError.inc();
       throw new IllegalStateException("Could not send message to " + destination, e);
